@@ -101,6 +101,71 @@ CGEventRef myCGEventCallback(CGEventTapProxy __unused proxy, CGEventType type, C
 
 // 3. 使用 AXUIElementCopyElementAtPosition 获取鼠标位置下的元素
         AXUIElementRef _element;
+        NSLog(@"Trying to get element at position: (%.2f, %.2f)", mouseLocation.x, mouseLocation.y);
+
+        AXError error = AXUIElementCopyElementAtPosition(_systemWideElement, 
+                                                (float)mouseLocation.x, 
+                                                (float)mouseLocation.y, 
+                                                &_element);
+
+        NSLog(@"AXUIElementCopyElementAtPosition result: %d", error);
+
+        // 检查具体的错误码
+        switch(error) {
+            case kAXErrorSuccess:
+                NSLog(@"Success");
+                break;
+            case kAXErrorFailure:
+                NSLog(@"General failure");
+                break;
+            case kAXErrorIllegalArgument:
+                NSLog(@"Illegal argument");
+                break;
+            case kAXErrorInvalidUIElement:
+                NSLog(@"Invalid UI element");
+                break;
+            case kAXErrorInvalidUIElementObserver:
+                NSLog(@"Invalid observer");
+                break;
+            case kAXErrorCannotComplete:
+                NSLog(@"Cannot complete");
+                break;
+            case kAXErrorAttributeUnsupported:
+                NSLog(@"Attribute unsupported");
+                break;
+            case kAXErrorActionUnsupported:
+                NSLog(@"Action unsupported");
+                break;
+            case kAXErrorNotificationUnsupported:
+                NSLog(@"Notification unsupported");
+                break;
+            case kAXErrorNotImplemented:
+                NSLog(@"Not implemented");
+                break;
+            case kAXErrorNotificationAlreadyRegistered:
+                NSLog(@"Notification already registered");
+                break;
+            case kAXErrorNotificationNotRegistered:
+                NSLog(@"Notification not registered");
+                break;
+            case kAXErrorAPIDisabled:
+                NSLog(@"API disabled - check accessibility permissions");
+                break;
+            case kAXErrorNoValue:
+                NSLog(@"No value");
+                break;
+            case kAXErrorParameterizedAttributeUnsupported:
+                NSLog(@"Parameterized attribute unsupported");
+                break;
+            case kAXErrorNotEnoughPrecision:
+                NSLog(@"Not enough precision");
+                break;
+            default:
+                NSLog(@"Unknown error: %d", error);
+                break;
+        }
+
+        // 在AXUIElementCopyElementAtPosition失败后添加备用方案
         if ((AXUIElementCopyElementAtPosition(_systemWideElement, (float) mouseLocation.x, (float) mouseLocation.y, &_element) == kAXErrorSuccess) && _element) {
     // 4. 检查获取到的元素的角色
             CFTypeRef _role;
@@ -120,7 +185,13 @@ CGEventRef myCGEventCallback(CGEventTapProxy __unused proxy, CGEventType type, C
             
             if (_element != NULL) CFRelease(_element);
         } else {
-            NSLog(@"Failed to get element at position: %f, %f", mouseLocation.x, mouseLocation.y);  // 获取位置元素失败
+            NSLog(@"Failed to get element at position: %f, %f", mouseLocation.x, mouseLocation.y);
+            NSLog(@"Trying to 备用方案：使用CGWindowListCopyWindowInfo获取窗口信息");
+            // 备用方案：使用CGWindowListCopyWindowInfo获取窗口信息
+            _clickedWindow = getWindowAtPosition(mouseLocation);
+            if (_clickedWindow) {
+                NSLog(@"Found window through CGWindowListCopyWindowInfo");
+            }
         }
         CFRelease(_systemWideElement);
         
@@ -624,6 +695,235 @@ AXUIElementRef findWindowForElement(AXUIElementRef element) {
     }
     
     return NULL;
+}
+
+
+
+// 检查窗口是否应该被过滤（透明、不可见或特殊窗口）
+bool shouldFilterWindow(CFDictionaryRef window) {
+    // 1. 检查窗口透明度
+    CFNumberRef alphaValue = CFDictionaryGetValue(window, kCGWindowAlpha);
+    float alpha = 1.0f;
+    if (alphaValue) {
+        CFNumberGetValue(alphaValue, kCFNumberFloatType, &alpha);
+    }
+    // 过滤完全透明的窗口
+    if (alpha < 0.1f) {
+        NSLog(@"  ✗ Filtering transparent window (alpha: %.2f)", alpha);
+        return true;
+    }
+    
+    // 2. 检查窗口是否在屏幕上
+    CFBooleanRef isOnScreen = CFDictionaryGetValue(window, kCGWindowIsOnscreen);
+    bool onScreen = true;
+    if (isOnScreen) {
+        onScreen = CFBooleanGetValue(isOnScreen);
+    }
+   // 过滤不在屏幕上的窗口
+    if (!onScreen) {
+        NSLog(@"  ✗ Filtering off-screen window");
+        return true;
+    }
+    
+    // 3. 检查窗口层级
+    CFNumberRef windowLayer = CFDictionaryGetValue(window, kCGWindowLayer);
+    int layer = 0;
+    if (windowLayer) {
+        CFNumberGetValue(windowLayer, kCFNumberSInt32Type, &layer);
+    }
+    // 过滤高层级窗口（工具提示、菜单等）
+    if (layer > 10) {
+        NSLog(@"  ✗ Filtering high-layer window (layer: %d)", layer);
+        return true;
+    }
+    
+    // // 4. 获取窗口边界
+    // CFDictionaryRef bounds = CFDictionaryGetValue(window, kCGWindowBounds);
+    // if (!bounds) return true; // 过滤掉没有边界的窗口
+    
+    // CGRect windowRect;
+    // if (!CGRectMakeWithDictionaryRepresentation(bounds, &windowRect)) return true;
+    
+    
+  
+    // // === 过滤条件 ===
+    
+    // // 过滤异常小的窗口（可能是透明覆盖）
+    // if (windowRect.size.width < 10 || windowRect.size.height < 10) {
+    //     NSLog(@"  ✗ Filtering tiny window (%.0fx%.0f)", 
+    //           windowRect.size.width, windowRect.size.height);
+    //     return true;
+    // }
+
+//  // 5. 获取应用名称
+//     CFStringRef windowOwnerName = CFDictionaryGetValue(window, kCGWindowOwnerName);
+//     NSString *ownerName = windowOwnerName ? (__bridge NSString*)windowOwnerName : @"";
+   
+    //   // 6. 获取窗口名称
+    // CFStringRef windowName = CFDictionaryGetValue(window, kCGWindowName);
+    // NSString *winName = windowName ? (__bridge NSString*)windowName : @"";
+    
+    
+    // 过滤已知的透明覆盖应用
+    // NSArray *transparentApps = @[@"Bartender 4", @"HacKit", @"TouchBarServer", 
+    //                             @"Dock", @"WindowServer", @"Spotlight", @"PopClip",
+    //                             @"Overflow 3", @"BetterTouchTool", @"Karabiner-Elements",
+    //                             @"Control Room", @"CleanMyMac", @"Finder"];
+    // if ([transparentApps containsObject:ownerName]) {
+    //     NSLog(@"  ✗ Filtering known transparent app: %@", ownerName);
+    //     return true;
+    // }
+    
+    // // 过滤特定的窗口名称模式
+    // NSArray *transparentWindowPatterns = @[@"Transparent", @"Overlay", @"HUD", 
+    //                                       @"TouchBar", @"Invisible", @"Desktop",
+    //                                       @"Wallpaper"];
+    // for (NSString *pattern in transparentWindowPatterns) {
+    //     if ([winName containsString:pattern] || [ownerName containsString:pattern]) {
+    //         NSLog(@"  ✗ Filtering window with transparent pattern: %@ (%@)", winName, ownerName);
+    //         return true;
+    //     }
+    // }
+    
+    // NSLog(@"  ✓ Window passed filter: %@ - %@ (layer: %d, alpha: %.2f)", ownerName, winName, layer, alpha);
+    return false; // 不过滤此窗口
+}
+
+AXUIElementRef getWindowAtPosition(CGPoint position) {
+    // 这个API直接从窗口服务器获取信息，绕过了应用层的辅助功能实现。
+    CFArrayRef windowList = CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        kCGNullWindowID
+    );
+    
+    if (!windowList) {
+        return NULL;
+    }
+    // NSLog(@"windowList: %@", windowList);
+    CFIndex count = CFArrayGetCount(windowList);
+    AXUIElementRef result = NULL;
+    
+    NSLog(@"Found %ld windows, checking z-order from front to back", count);
+    
+    for (CFIndex i = 0; i < count; i++) {
+        CFDictionaryRef window = CFArrayGetValueAtIndex(windowList, i);
+        
+        // 首先过滤不需要的窗口
+        if (shouldFilterWindow(window)) {
+            continue; // 跳过被过滤的窗口
+        }
+        
+        // 获取窗口边界
+        CFDictionaryRef bounds = CFDictionaryGetValue(window, kCGWindowBounds);
+        if (!bounds) continue;
+        
+        CGRect windowRect;
+        if (!CGRectMakeWithDictionaryRepresentation(bounds, &windowRect)) continue;
+        
+        // 检查点击位置是否在窗口内, 这里就是找到特定窗口的
+        if (CGRectContainsPoint(windowRect, position)) {
+            NSLog(@"✓ Position (%.2f, %.2f) is inside viable window %ld", 
+                  position.x, position.y, i);
+            // 获取窗口的PID
+            CFNumberRef pidNumber = CFDictionaryGetValue(window, kCGWindowOwnerPID);
+            if (!pidNumber) continue;
+            
+            pid_t pid;
+            CFNumberGetValue(pidNumber, kCFNumberSInt32Type, &pid);
+            
+            // 获取窗口号
+            CFNumberRef windowNumber = CFDictionaryGetValue(window, kCGWindowNumber);
+            if (!windowNumber) continue;
+            
+            CGWindowID windowID;
+            CFNumberGetValue(windowNumber, kCFNumberSInt32Type, &windowID);
+
+            CFStringRef windowOwnerName = CFDictionaryGetValue(window, kCGWindowOwnerName);
+            NSString *ownerName = windowOwnerName ? (__bridge NSString*)windowOwnerName : @"Unknown";
+            NSLog(@"  → Trying to find AX element for PID: %d (%@)", pid, ownerName);
+            // 尝试通过PID创建AXUIElement并查找对应的窗口
+            AXUIElementRef app = AXUIElementCreateApplication(pid);
+            if (app) {
+                CFArrayRef windows = NULL;
+                if (AXUIElementCopyAttributeValue(app, kAXWindowsAttribute, (CFTypeRef*)&windows) == kAXErrorSuccess) {
+                    if (windows) {
+                        CFIndex windowCount = CFArrayGetCount(windows);
+                        NSLog(@"windowCount: %d", windowCount);
+                        // for (CFIndex j = 0; j < windowCount; j++) {
+                        //     AXUIElementRef axWindow = CFArrayGetValueAtIndex(windows, j);
+                            
+                            
+                        //     CFTypeRef titleValue = NULL;
+                        //     AXError result = AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute, &titleValue);
+                        //     if (result == kAXErrorSuccess && titleValue) {
+                        //         NSString *title = (__bridge NSString *)titleValue;
+                        //         NSString *retainedTitle = [title copy]; // 创建副本
+                        //         CFRelease(titleValue);
+                        //         NSLog(@"title: %@", retainedTitle);
+                        //     }
+                        // }
+
+                        for (CFIndex j = 0; j < windowCount; j++) {
+                            AXUIElementRef axWindow = CFArrayGetValueAtIndex(windows, j);
+                            
+                            
+                            // 获取窗口位置和大小来匹配
+                            CFTypeRef positionValue = NULL;
+                            CFTypeRef sizeValue = NULL;
+                            
+                            if (AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute, &positionValue) == kAXErrorSuccess &&
+                                AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute, &sizeValue) == kAXErrorSuccess) {
+                                
+                                CGPoint axPosition;
+                                CGSize axSize;
+                                
+                                if (AXValueGetValue(positionValue, kAXValueCGPointType, &axPosition) &&
+                                    AXValueGetValue(sizeValue, kAXValueCGSizeType, &axSize)) {
+                                    
+                                    CGRect axRect = CGRectMake(axPosition.x, axPosition.y, axSize.width, axSize.height);
+                                    
+                                    // 检查是否匹配（允许一定误差）
+                                    if (fabs(axRect.origin.x - windowRect.origin.x) < 5 &&
+                                        fabs(axRect.origin.y - windowRect.origin.y) < 5 &&
+                                        fabs(axRect.size.width - windowRect.size.width) < 5 &&
+                                        fabs(axRect.size.height - windowRect.size.height) < 5) {
+                                        
+                                        NSLog(@"    ✓ Found matching AX window!");
+                                        
+                                        // 获取窗口标题确认
+                                        CFTypeRef titleValue = NULL;
+                                        if (AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute, &titleValue) == kAXErrorSuccess && titleValue) {
+                                            NSLog(@"    Window title: %@", (__bridge NSString*)titleValue);
+                                            CFRelease(titleValue);
+                                        }
+                                        
+                                        CFRetain(axWindow);
+                                        result = axWindow;
+                                    }
+                                }
+                                
+                                if (positionValue) CFRelease(positionValue);
+                                if (sizeValue) CFRelease(sizeValue);
+                                
+                                if (result) break;
+                            }
+                        }
+                        CFRelease(windows);
+                    }
+                }
+                CFRelease(app);
+                
+                // 如果找到了匹配的窗口，就返回（这是最前面的可见窗口）
+                if (result) {
+                    NSLog(@"✓ Successfully found topmost viable window at position");
+                    break;
+                }
+            }
+        }
+    }
+    
+    CFRelease(windowList);
+    return result;
 }
 
 @end
