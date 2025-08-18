@@ -91,6 +91,7 @@ CGEventRef myCGEventCallback(CGEventTapProxy __unused proxy, CGEventType type, C
     // move or resize
     if ((type == kCGEventLeftMouseDown && !resizeOnly)
             || type == resizeModifierDown) {
+        // 2. 获取鼠标点击位置
         CGPoint mouseLocation = CGEventGetLocation(event);
         [moveResize setTracking:CACurrentMediaTime()];
 
@@ -98,28 +99,40 @@ CGEventRef myCGEventCallback(CGEventTapProxy __unused proxy, CGEventType type, C
         AXUIElementRef _clickedWindow = NULL;
         _systemWideElement = AXUIElementCreateSystemWide();
 
+// 3. 使用 AXUIElementCopyElementAtPosition 获取鼠标位置下的元素
         AXUIElementRef _element;
         if ((AXUIElementCopyElementAtPosition(_systemWideElement, (float) mouseLocation.x, (float) mouseLocation.y, &_element) == kAXErrorSuccess) && _element) {
+    // 4. 检查获取到的元素的角色
             CFTypeRef _role;
             if (AXUIElementCopyAttributeValue(_element, (__bridge CFStringRef)NSAccessibilityRoleAttribute, &_role) == kAXErrorSuccess) {
-                if ([(__bridge NSString *)_role isEqualToString:NSAccessibilityWindowRole]) {
-                    _clickedWindow = _element;
+                NSString *roleString = (__bridge NSString *)_role;
+                NSLog(@"Element role: %@", roleString);  // 添加日志，查看元素的角色
+                
+                _clickedWindow = findWindowForElement(_element);
+                if (_clickedWindow) {
+                    NSLog(@"Found window through hierarchy");
                 }
+                
                 if (_role != NULL) CFRelease(_role);
+            } else {
+                NSLog(@"Failed to get role");  // 获取角色失败
             }
-            if (_clickedWindow==NULL){
-                CFTypeRef _window;
-                if (AXUIElementCopyAttributeValue(_element, (__bridge CFStringRef)NSAccessibilityWindowAttribute, &_window) == kAXErrorSuccess) {
-                    if (_element != NULL) CFRelease(_element);
-                    _clickedWindow = (AXUIElementRef)_window;
-                }
-            }
+            
+            if (_element != NULL) CFRelease(_element);
+        } else {
+            NSLog(@"Failed to get element at position: %f, %f", mouseLocation.x, mouseLocation.y);  // 获取位置元素失败
         }
         CFRelease(_systemWideElement);
         
+        if (_clickedWindow == NULL) {
+            NSLog(@"Failed to find window");
+            [moveResize setTracking:0];
+            return event;
+        }
+
         pid_t PID;
-        NSRunningApplication* app;
-        if(!AXUIElementGetPid(_clickedWindow, &PID)) {
+        NSRunningApplication* app = nil;
+        if(_clickedWindow && !AXUIElementGetPid(_clickedWindow, &PID)) {
             app = [NSRunningApplication runningApplicationWithProcessIdentifier:PID];
             if ([[ourDelegate getDisabledApps] objectForKey:[app bundleIdentifier]] != nil) {
                 [moveResize setTracking:0];
@@ -129,10 +142,10 @@ CGEventRef myCGEventCallback(CGEventTapProxy __unused proxy, CGEventType type, C
         }
 
         if([ourDelegate shouldBringWindowToFront]){
-            if (app != nil) {
+            if (app != nil && _clickedWindow != NULL) {
                 [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+                AXUIElementPerformAction(_clickedWindow, kAXRaiseAction);
             }
-            AXUIElementPerformAction(_clickedWindow, kAXRaiseAction);
         }
         
         CFTypeRef _cPosition = nil;
@@ -212,21 +225,21 @@ CGEventRef myCGEventCallback(CGEventTapProxy __unused proxy, CGEventType type, C
 
         NSSize wndSize = cSize;
 
-        if (clickPoint.x < wndSize.width/3) {
-            resizeSection.xResizeDirection = left;
-        } else if (clickPoint.x > 2*wndSize.width/3) {
+//        if (clickPoint.x < wndSize.width/3) {
+//            resizeSection.xResizeDirection = left;
+//        } else if (clickPoint.x > 2*wndSize.width/3) {
+//            resizeSection.xResizeDirection = right;
+//        } else {
             resizeSection.xResizeDirection = right;
-        } else {
-            resizeSection.xResizeDirection = right;
-        }
+//        }
 
-        if (clickPoint.y < wndSize.height/3) {
-            resizeSection.yResizeDirection = bottom;
-        } else  if (clickPoint.y > 2*wndSize.height/3) {
+//        if (clickPoint.y < wndSize.height/3) {
+//            resizeSection.yResizeDirection = bottom;
+//        } else  if (clickPoint.y > 2*wndSize.height/3) {
+//            resizeSection.yResizeDirection = top;
+//        } else {
             resizeSection.yResizeDirection = top;
-        } else {
-            resizeSection.yResizeDirection = top;
-        }
+//        }
 
         [moveResize setWndSize:wndSize];
         [moveResize setResizeSection:resizeSection];
@@ -570,6 +583,47 @@ CGEventRef myCGEventCallback(CGEventTapProxy __unused proxy, CGEventType type, C
     }
     [_disabledAppsMenu setSubmenu:submenu];
     [_disabledAppsMenu setEnabled:([disabledApps count] > 0)];
+}
+
+AXUIElementRef findWindowForElement(AXUIElementRef element) {
+    if (!element) return NULL;
+    
+    // 检查当前元素是否为窗口
+    CFTypeRef role = NULL;
+    AXUIElementRef result = NULL;
+    
+    if (AXUIElementCopyAttributeValue(element, (__bridge CFStringRef)NSAccessibilityRoleAttribute, &role) == kAXErrorSuccess) {
+        if (role) {
+            NSString *roleString = (__bridge NSString *)role;
+            if ([roleString isEqualToString:NSAccessibilityWindowRole]) {
+                CFRetain(element);
+                result = element;
+            }
+            CFRelease(role);
+            if (result) return result;
+        }
+    }
+    
+    // 尝试获取元素的窗口属性
+    CFTypeRef window = NULL;
+    if (AXUIElementCopyAttributeValue(element, (__bridge CFStringRef)NSAccessibilityWindowAttribute, &window) == kAXErrorSuccess) {
+        if (window) {
+            result = (AXUIElementRef)window;
+            return result;
+        }
+    }
+    
+    // 如果上述方法都失败，尝试获取父元素并递归查找
+    CFTypeRef parent = NULL;
+    if (AXUIElementCopyAttributeValue(element, (__bridge CFStringRef)NSAccessibilityParentAttribute, &parent) == kAXErrorSuccess) {
+        if (parent) {
+            result = findWindowForElement((AXUIElementRef)parent);
+            CFRelease(parent);
+            return result;
+        }
+    }
+    
+    return NULL;
 }
 
 @end
