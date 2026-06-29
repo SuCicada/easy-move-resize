@@ -1,3 +1,4 @@
+# 打印 TCC.db 的 access 表结构 hash
 sudo tccutil.py --digest  -i  /Users/peng/Library/Developer/Xcode/DerivedData/easy-move-resize-my-cqvumhrdqlgrddcghgsenmgrjqvb/Build/Products/Debug/easy-move-resize-my.app --digest
 
 

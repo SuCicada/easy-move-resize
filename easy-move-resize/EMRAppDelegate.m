@@ -18,7 +18,6 @@
 CGEventRef myCGEventCallback(CGEventTapProxy __unused proxy, CGEventType type, CGEventRef event, void *refcon) {
 
     EMRAppDelegate *ourDelegate = (__bridge EMRAppDelegate*)refcon;
-    int keyModifierFlags = [ourDelegate modifierFlags];
     bool shouldMiddleClickResize = [ourDelegate shouldMiddleClickResize];
     bool resizeOnly = [ourDelegate resizeOnly];
     CGEventType resizeModifierDown = kCGEventRightMouseDown;
@@ -30,13 +29,6 @@ CGEventRef myCGEventCallback(CGEventTapProxy __unused proxy, CGEventType type, C
         return event;
     }
 
-    if (keyModifierFlags == 0) {
-        // No modifier keys set. Disable behaviour.
-        return event;
-    }
-    
-//    NSLog(@"keyModifierFlags: %d ", keyModifierFlags);
-    
     if (shouldMiddleClickResize){
 //        resizeModifierDown = kCGEventOtherMouseDown;
 //        resizeModifierDragged = kCGEventOtherMouseDragged;
@@ -73,16 +65,15 @@ CGEventRef myCGEventCallback(CGEventTapProxy __unused proxy, CGEventType type, C
     
     
     if (mode == 0) {
-        // didn't find our expected modifiers; this event isn't for us
-//        NSLog(@"not keyModifierFlags, skip");
         return event;
     }
 
-    int ignoredKeysMask = (kCGEventFlagMaskShift | kCGEventFlagMaskCommand | kCGEventFlagMaskAlphaShift | kCGEventFlagMaskAlternate | kCGEventFlagMaskControl | kCGEventFlagMaskSecondaryFn) ^ keyModifierFlags;
-    
+    // Fixed shortcuts (ignore modifier items in the menu): move ⌃⌥, resize ⇧⌃⌥
+    int requiredModifierFlags = (mode == 2) ? resizeKeyModifierFlag : moveKeyModifierFlag;
+    int allModifierFlags = kCGEventFlagMaskShift | kCGEventFlagMaskCommand | kCGEventFlagMaskAlphaShift | kCGEventFlagMaskAlternate | kCGEventFlagMaskControl | kCGEventFlagMaskSecondaryFn;
+    int ignoredKeysMask = allModifierFlags ^ (requiredModifierFlags | kCGEventFlagMaskCommand);
+
     if (flags & ignoredKeysMask) {
-        // also ignore this event if we've got extra modifiers (i.e. holding down Cmd+Ctrl+Alt should not invoke our action)
-        NSLog(@"ignoredKeysMask, skip");
         return event;
     }
     
